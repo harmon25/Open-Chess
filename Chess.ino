@@ -179,57 +179,80 @@ void loop() {
         strip.show();
         
         // Wait for piece placement - new logic for capture moves
-        unsigned long startWaitTime = millis();
-        const unsigned long maxWaitTime = 5000; // 5 seconds timeout
         int targetRow = -1, targetCol = -1;
         bool piecePlaced = false;
         bool captureMove = false;
 
-        // Check if one of the highlighted moves is a capture (capturedRow/capturedCol were set)
         if (capturedRow != -1 && capturedCol != -1) {
-          // This is a potential capture move
+          // Capture move: wait indefinitely for enemy piece removal and then for capturing piece placement.
           captureMove = true;
           Serial.println("Waiting for enemy piece removal (capture move)...");
           
-          // First, wait for the enemy piece to be removed (sensor goes LOW)
-          while (millis() - startWaitTime < maxWaitTime) {
+          // Wait for the enemy piece to be removed (sensor goes LOW)
+          while (sensorState[capturedRow][capturedCol]) {
             readSensors();
-            if (!sensorState[capturedRow][capturedCol]) {
-              Serial.println("Enemy piece removed, waiting for capturing piece placement...");
-              break;
-            }
             delay(50);
           }
           
-          // Then, wait for the capturing piece to be placed on that square (sensor goes HIGH)
-          while (millis() - startWaitTime < maxWaitTime) {
+          Serial.println("Enemy piece removed, waiting for capturing piece placement...");
+          
+          // Wait for the capturing piece to be placed on that square (sensor goes HIGH)
+          while (!sensorState[capturedRow][capturedCol]) {
             readSensors();
-            if (sensorState[capturedRow][capturedCol]) {
-              targetRow = capturedRow;
-              targetCol = capturedCol;
-              piecePlaced = true;
-              break;
-            }
             delay(50);
           }
+          
+          targetRow = capturedRow;
+          targetCol = capturedCol;
+          piecePlaced = true;
         } else {
-          // Normal move detection for non-capture moves
-          while (!piecePlaced && (millis() - startWaitTime < maxWaitTime)) {
+          // Normal move detection: wait indefinitely for any new piece placement.
+          while (!piecePlaced) {
             readSensors();
             for (int r2 = 0; r2 < 8; r2++) {
               for (int c2 = 0; c2 < 8; c2++) {
-                // Check for a new activation on a square that is not the original
-                if (sensorState[r2][c2] && (r2 != row || c2 != col) && !sensorPrev[r2][c2]) {
-                  targetRow = r2;
-                  targetCol = c2;
-                  piecePlaced = true;
-                  break;
+                if (r2 == row && c2 == col) {
+                  // Special case: the piece is placed back in its original square.
+                  if (sensorState[r2][c2]) {
+                    targetRow = r2;
+                    targetCol = c2;
+                    piecePlaced = true;
+                    break;
+                  }
+                } else {
+                  // For any other square, detect a new activation.
+                  if (sensorState[r2][c2] && !sensorPrev[r2][c2]) {
+                    targetRow = r2;
+                    targetCol = c2;
+                    piecePlaced = true;
+                    break;
+                  }
                 }
               }
               if (piecePlaced) break;
             }
             delay(50);
           }
+        }
+
+        // Check if piece is replaced in the original spot
+        if (targetRow == row && targetCol == col) {
+          Serial.println("Piece replaced in original spot");
+          // Blink once to confirm
+          int currentPixelIndex = col * NUM_COLS + (7 - row);
+          strip.setPixelColor(currentPixelIndex, strip.Color(0, 0, 0, 255));
+          strip.show();
+          delay(200);
+          strip.setPixelColor(currentPixelIndex, strip.Color(0, 0, 0, 100));
+          strip.show();
+          
+          // Clear all LED effects
+          for (int i = 0; i < LED_COUNT; i++) {
+            strip.setPixelColor(i, 0);
+          }
+          strip.show();
+          
+          continue; // Skip to next iteration
         }
         
         // If no piece placed within timeout, reset
