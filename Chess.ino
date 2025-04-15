@@ -63,6 +63,9 @@ char initialBoard[8][8] = {
 // Internal board state for gameplay (initialized from initialBoard)
 char board[8][8];
 
+// For promotion animation
+const uint32_t PROMOTION_COLOR = strip.Color(255, 215, 0, 50); // Gold with white
+
 // ---------------------------
 // Function Prototypes
 // ---------------------------
@@ -74,6 +77,8 @@ void printBoardState();
 void fireworkAnimation();
 void blinkSquare(int row, int col);
 void captureAnimation();
+void promotionAnimation(int col);
+void checkForPromotion(int targetRow, int targetCol, char piece);
 void getPossibleMoves(int row, int col, int &moveCount, int moves[][2]);
 
 // ---------------------------
@@ -296,6 +301,9 @@ void loop() {
           // Update board state
           board[targetRow][targetCol] = piece;
           board[row][col] = ' ';
+          
+          // Check for pawn promotion
+          checkForPromotion(targetRow, targetCol, piece);
           
           // Confirmation: Double blink destination square
           int newPixelIndex = targetCol * NUM_COLS + (7 - targetRow);
@@ -526,7 +534,154 @@ void captureAnimation() {
   strip.show();
 }
 
-// getPossibleMoves: A very simplified move generator for demonstration purposes.
+void promotionAnimation(int col) {
+  // Column-based waterfall animation
+  for (int step = 0; step < 16; step++) {
+    for (int row = 0; row < 8; row++) {
+      int pixelIndex = col * NUM_COLS + (7 - row);
+      
+      // Create a golden wave moving up and down the column
+      if ((step + row) % 8 < 4) {
+        strip.setPixelColor(pixelIndex, PROMOTION_COLOR);
+      } else {
+        strip.setPixelColor(pixelIndex, 0);
+      }
+    }
+    strip.show();
+    delay(100);
+  }
+  
+  // Clear the animation
+  for (int row = 0; row < 8; row++) {
+    int pixelIndex = col * NUM_COLS + (7 - row);
+    strip.setPixelColor(pixelIndex, 0);
+  }
+  strip.show();
+}
+
+// checkForPromotion: Checks if a pawn has reached the promotion rank and promotes it to a queen
+void checkForPromotion(int targetRow, int targetCol, char piece) {
+  // Check if a white pawn (P) reached the 8th rank (row 7)
+  if (piece == 'P' && targetRow == 7) {
+    Serial.print("White pawn promoted to Queen at ");
+    Serial.print((char)('a' + targetCol));
+    Serial.println("8");
+    
+    // Play promotion animation
+    promotionAnimation(targetCol);
+    
+    // Promote to queen in board state
+    board[targetRow][targetCol] = 'Q';
+    
+    // Wait for the player to replace the pawn with a queen
+    Serial.println("Please replace the pawn with a queen piece");
+    
+    // Flash the promotion square until the piece is removed and replaced
+    int pixelIndex = targetCol * NUM_COLS + (7 - targetRow);
+    
+    // First wait for the pawn to be removed
+    while (sensorState[targetRow][targetCol]) {
+      // Blink the square to indicate action needed
+      strip.setPixelColor(pixelIndex, PROMOTION_COLOR);
+      strip.show();
+      delay(250);
+      strip.setPixelColor(pixelIndex, 0);
+      strip.show();
+      delay(250);
+      
+      // Read sensors
+      readSensors();
+    }
+    
+    Serial.println("Pawn removed, please place a queen");
+    
+    // Then wait for the queen to be placed
+    while (!sensorState[targetRow][targetCol]) {
+      // Blink the square to indicate action needed
+      strip.setPixelColor(pixelIndex, PROMOTION_COLOR);
+      strip.show();
+      delay(250);
+      strip.setPixelColor(pixelIndex, 0);
+      strip.show();
+      delay(250);
+      
+      // Read sensors
+      readSensors();
+    }
+    
+    Serial.println("Queen placed, promotion complete");
+    
+    // Final confirmation blink
+    for (int i = 0; i < 3; i++) {
+      strip.setPixelColor(pixelIndex, PROMOTION_COLOR);
+      strip.show();
+      delay(100);
+      strip.setPixelColor(pixelIndex, 0);
+      strip.show();
+      delay(100);
+    }
+  }
+  // Check if a black pawn (p) reached the 1st rank (row 0)
+  else if (piece == 'p' && targetRow == 0) {
+    Serial.print("Black pawn promoted to Queen at ");
+    Serial.print((char)('a' + targetCol));
+    Serial.println("1");
+    
+    // Play promotion animation
+    promotionAnimation(targetCol);
+    
+    // Promote to queen in board state
+    board[targetRow][targetCol] = 'q';
+    
+    // Wait for the player to replace the pawn with a queen
+    Serial.println("Please replace the pawn with a queen piece");
+    
+    // Flash the promotion square until the piece is removed and replaced
+    int pixelIndex = targetCol * NUM_COLS + (7 - targetRow);
+    
+    // First wait for the pawn to be removed
+    while (sensorState[targetRow][targetCol]) {
+      // Blink the square to indicate action needed
+      strip.setPixelColor(pixelIndex, PROMOTION_COLOR);
+      strip.show();
+      delay(250);
+      strip.setPixelColor(pixelIndex, 0);
+      strip.show();
+      delay(250);
+      
+      // Read sensors
+      readSensors();
+    }
+    
+    Serial.println("Pawn removed, please place a queen");
+    
+    // Then wait for the queen to be placed
+    while (!sensorState[targetRow][targetCol]) {
+      // Blink the square to indicate action needed
+      strip.setPixelColor(pixelIndex, PROMOTION_COLOR);
+      strip.show();
+      delay(250);
+      strip.setPixelColor(pixelIndex, 0);
+      strip.show();
+      delay(250);
+      
+      // Read sensors
+      readSensors();
+    }
+    
+    Serial.println("Queen placed, promotion complete");
+    
+    // Final confirmation blink
+    for (int i = 0; i < 3; i++) {
+      strip.setPixelColor(pixelIndex, PROMOTION_COLOR);
+      strip.show();
+      delay(100);
+      strip.setPixelColor(pixelIndex, 0);
+      strip.show();
+      delay(100);
+    }
+  }
+}
 // (This does not implement full chess rules.)
 void getPossibleMoves(int row, int col, int &moveCount, int moves[][2]) {
   moveCount = 0;
