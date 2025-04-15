@@ -73,7 +73,7 @@ void updateSetupDisplay();
 void printBoardState();
 void fireworkAnimation();
 void blinkSquare(int row, int col);
-void pulsePossibleMoves(int moves[][2], int moveCount); // legacy pulse (not used during waiting)
+void captureAnimation();
 void getPossibleMoves(int row, int col, int &moveCount, int moves[][2]);
 
 // ---------------------------
@@ -130,7 +130,6 @@ void setup() {
 // ---------------------------
 // MAIN LOOP
 // ---------------------------
-// In the main loop, modify the piece movement logic
 void loop() {
   readSensors();
 
@@ -156,11 +155,7 @@ void loop() {
         int currentPixelIndex = col * NUM_COLS + (7 - row);
         strip.setPixelColor(currentPixelIndex, strip.Color(0, 0, 0, 100)); // Dimmer, but solid
         
-        // Track potential captured pieces
-        int capturedRow = -1;
-        int capturedCol = -1;
-        
-        // Possible move squares with capture logic
+        // Highlight possible move squares (including captures)
         for (int i = 0; i < moveCount; i++) {
           int r = moves[i][0];
           int c = moves[i][1];
@@ -171,75 +166,93 @@ void loop() {
             strip.setPixelColor(movePixelIndex, strip.Color(0, 0, 0, 50)); // Soft white for moves
           } else {
             strip.setPixelColor(movePixelIndex, strip.Color(255, 0, 0, 50)); // Red tint for captures
-            // Store potential capture locations
-            capturedRow = r;
-            capturedCol = c;
           }
         }
         strip.show();
         
-        // Wait for piece placement - new logic for capture moves
+        // Wait for piece placement - handle both normal moves and captures
         int targetRow = -1, targetCol = -1;
         bool piecePlaced = false;
-        bool captureMove = false;
+        bool captureInProgress = false;
 
-        if (capturedRow != -1 && capturedCol != -1) {
-          // Capture move: wait indefinitely for enemy piece removal and then for capturing piece placement.
-          captureMove = true;
-          Serial.println("Waiting for enemy piece removal (capture move)...");
+        // Wait for a piece placement on any square
+        while (!piecePlaced) {
+          readSensors();
           
-          // Wait for the enemy piece to be removed (sensor goes LOW)
-          while (sensorState[capturedRow][capturedCol]) {
-            readSensors();
-            delay(50);
+          // First check if the original piece was placed back
+          if (sensorState[row][col]) {
+            targetRow = row;
+            targetCol = col;
+            piecePlaced = true;
+            break;
           }
           
-          Serial.println("Enemy piece removed, waiting for capturing piece placement...");
-          
-          // Wait for the capturing piece to be placed on that square (sensor goes HIGH)
-          while (!sensorState[capturedRow][capturedCol]) {
-            readSensors();
-            delay(50);
-          }
-          
-          targetRow = capturedRow;
-          targetCol = capturedCol;
-          piecePlaced = true;
-        } else {
-          // Normal move detection: wait indefinitely for any new piece placement.
-          while (!piecePlaced) {
-            readSensors();
-            for (int r2 = 0; r2 < 8; r2++) {
-              for (int c2 = 0; c2 < 8; c2++) {
-                if (r2 == row && c2 == col) {
-                  // Special case: the piece is placed back in its original square.
-                  if (sensorState[r2][c2]) {
-                    targetRow = r2;
-                    targetCol = c2;
-                    piecePlaced = true;
-                    break;
-                  }
-                } else {
-                  // For any other square, detect a new activation.
-                  if (sensorState[r2][c2] && !sensorPrev[r2][c2]) {
-                    targetRow = r2;
-                    targetCol = c2;
-                    piecePlaced = true;
-                    break;
-                  }
+          // Then check all squares for a regular move or capture initiation
+          for (int r2 = 0; r2 < 8; r2++) {
+            for (int c2 = 0; c2 < 8; c2++) {
+              // Skip the original square which was already checked
+              if (r2 == row && c2 == col) continue;
+              
+              // Check if this would be a legal move
+              bool isLegalMove = false;
+              for (int i = 0; i < moveCount; i++) {
+                if (moves[i][0] == r2 && moves[i][1] == c2) {
+                  isLegalMove = true;
+                  break;
                 }
               }
-              if (piecePlaced) break;
+              
+              // If not a legal move, no need to check further
+              if (!isLegalMove) continue;
+              
+              // For capture moves: detect when the target piece is removed
+              if (board[r2][c2] != ' ' && !sensorState[r2][c2] && sensorPrev[r2][c2]) {
+                Serial.print("Capture initiated at ");
+                Serial.print((char)('a' + c2));
+                Serial.println(r2 + 1);
+                
+                // Store the target square and wait for the capturing piece to be placed there
+                targetRow = r2;
+                targetCol = c2;
+                captureInProgress = true;
+                
+                // Flash the capture square to indicate waiting for piece placement
+                int capturePixelIndex = c2 * NUM_COLS + (7 - r2);
+                strip.setPixelColor(capturePixelIndex, strip.Color(255, 0, 0, 100));
+                strip.show();
+                
+                // Wait for the capturing piece to be placed
+                bool capturePiecePlaced = false;
+                while (!capturePiecePlaced) {
+                  readSensors();
+                  if (sensorState[r2][c2]) {
+                    capturePiecePlaced = true;
+                    piecePlaced = true;
+                    break;
+                  }
+                  delay(50);
+                }
+                break;
+              }
+              
+              // For normal non-capture moves: detect when a piece is placed on an empty square
+              else if (board[r2][c2] == ' ' && sensorState[r2][c2] && !sensorPrev[r2][c2]) {
+                targetRow = r2;
+                targetCol = c2;
+                piecePlaced = true;
+                break;
+              }
             }
-            delay(50);
+            if (piecePlaced || captureInProgress) break;
           }
+          
+          delay(50);
         }
 
         // Check if piece is replaced in the original spot
         if (targetRow == row && targetCol == col) {
           Serial.println("Piece replaced in original spot");
           // Blink once to confirm
-          int currentPixelIndex = col * NUM_COLS + (7 - row);
           strip.setPixelColor(currentPixelIndex, strip.Color(0, 0, 0, 255));
           strip.show();
           delay(200);
@@ -255,24 +268,16 @@ void loop() {
           continue; // Skip to next iteration
         }
         
-        // If no piece placed within timeout, reset
-        if (!piecePlaced) {
-          Serial.println("No piece placement detected, resetting");
-          
-          // Clear LED effects
-          for (int i = 0; i < LED_COUNT; i++) {
-            strip.setPixelColor(i, 0);
-          }
-          strip.show();
-          
-          continue;
-        }
-        
         // Check if move is legal
         bool legalMove = false;
+        bool isCapture = false;
         for (int i = 0; i < moveCount; i++) {
           if (moves[i][0] == targetRow && moves[i][1] == targetCol) {
             legalMove = true;
+            // Check if this is a capture move
+            if (board[targetRow][targetCol] != ' ') {
+              isCapture = true;
+            }
             break;
           }
         }
@@ -282,19 +287,10 @@ void loop() {
           Serial.print((char)('a' + targetCol));
           Serial.println(targetRow + 1);
           
-          // Capture animation if a piece is being captured
-          if (captureMove) {
+          // Play capture animation if needed
+          if (board[targetRow][targetCol] != ' ') {
             Serial.println("Performing capture animation");
             captureAnimation();
-            
-            // Remove the captured piece from the board
-            board[capturedRow][capturedCol] = ' ';
-            
-            // Optional: Light up the captured square briefly
-            int capturedPixelIndex = capturedCol * NUM_COLS + (7 - capturedRow);
-            strip.setPixelColor(capturedPixelIndex, strip.Color(255, 0, 0, 100));
-            strip.show();
-            delay(500);
           }
           
           // Update board state
@@ -333,6 +329,7 @@ void loop() {
   
   delay(100);
 }
+
 // ---------------------------
 // FUNCTIONS
 // ---------------------------
@@ -557,19 +554,19 @@ void getPossibleMoves(int row, int col, int &moveCount, int moves[][2]) {
             moveCount++;
           }
         }
-        
-        // Diagonal captures (simplified)
-        int captureColumns[] = {col-1, col+1};
-        for (int i = 0; i < 2; i++) {
-          if (captureColumns[i] >= 0 && captureColumns[i] < 8) {
-            char targetPiece = board[row + direction][captureColumns[i]];
-            if (targetPiece != ' ' && 
-                ((pieceColor == 'w' && targetPiece >= 'a' && targetPiece <= 'z') || 
-                 (pieceColor == 'b' && targetPiece >= 'A' && targetPiece <= 'Z'))) {
-              moves[moveCount][0] = row + direction;
-              moves[moveCount][1] = captureColumns[i];
-              moveCount++;
-            }
+      }
+      
+      // Diagonal captures
+      int captureColumns[] = {col-1, col+1};
+      for (int i = 0; i < 2; i++) {
+        if (captureColumns[i] >= 0 && captureColumns[i] < 8) {
+          char targetPiece = board[row + direction][captureColumns[i]];
+          if (targetPiece != ' ' && 
+              ((pieceColor == 'w' && targetPiece >= 'a' && targetPiece <= 'z') || 
+               (pieceColor == 'b' && targetPiece >= 'A' && targetPiece <= 'Z'))) {
+            moves[moveCount][0] = row + direction;
+            moves[moveCount][1] = captureColumns[i];
+            moveCount++;
           }
         }
       }
